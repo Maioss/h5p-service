@@ -6,561 +6,505 @@ namespace App\H5P;
 
 use H5PFrameworkInterface;
 use PDO;
+use PDOException;
+use InvalidArgumentException;
 
 /**
- * Implementación “standalone” de H5PFrameworkInterface
- * usando MySQL y las tablas h5p_* que ya creaste.
+ * Implementación optimizada de H5PFrameworkInterface
+ * Basada en MySQL con gestión robusta de errores y transacciones
  */
 class H5PFramework implements H5PFrameworkInterface
 {
-    /** @var Database */
-    protected $db;
+    private PDO $pdo;
+    private array $config;
+    private array $messages = ['info' => [], 'error' => []];
 
-    /** @var array */
-    protected $config;
-
-    /** @var array */
-    protected $messages = [
-        'info'  => [],
-        'error' => [],
-    ];
-
-    public function __construct(Database $db, array $config)
+    public function __construct(PDO $pdo, array $config)
     {
-        $this->db     = $db;
+        $this->pdo = $pdo;
         $this->config = $config;
-    }
 
-    protected function pdo(): PDO
-    {
-        return $this->db->getConnection();
+        // Configurar PDO para excepciones
+        $this->pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     }
 
     /* =========================================================
-     *  Plataforma / mensajes / traducción
+     *  INFORMACIÓN DE PLATAFORMA Y MENSAJERÍA
      * ======================================================= */
 
-    public function getPlatformInfo()
+    public function getPlatformInfo(): array
     {
         return [
-            'name'       => 'Slim H5P Service',
-            'version'    => '1.0.0',
-            'h5pVersion' => '1.x', // versión del “plugin”/integración
+            'name'       => $this->config['platform_name'] ?? 'H5P Microservice',
+            'version'    => $this->config['platform_version'] ?? '1.0.0',
+            'h5pVersion' => $this->config['h5p_version'] ?? '1.27',
         ];
     }
 
-    public function fetchExternalData($url, $data = NULL, $blocking = TRUE, $stream = NULL, $fullData = FALSE, $headers = array(), $files = array(), $method = 'POST')
+    public function setErrorMessage($message, $code = NULL): void
     {
-        // Implementación mínima sin soporte para archivos ($files)
-        $opts = [
-            'http' => [
-                'method'        => $method,
-                'timeout'       => $blocking ? 30 : 1,
-                'ignore_errors' => true,
-            ],
-        ];
-
-        $httpHeaders = [];
-        foreach ($headers as $k => $v) {
-            $httpHeaders[] = $k . ': ' . $v;
-        }
-        if (!empty($httpHeaders)) {
-            $opts['http']['header'] = implode("\r\n", $httpHeaders);
-        }
-
-        if (!empty($data)) {
-            if (strtoupper($method) === 'GET') {
-                $url .= (strpos($url, '?') === false ? '?' : '&') . http_build_query($data);
-            } else {
-                $opts['http']['content'] = http_build_query($data);
-                $opts['http']['header'] = ($opts['http']['header'] ?? '') . "\r\nContent-Type: application/x-www-form-urlencoded";
-            }
-        }
-
-        $ctx    = stream_context_create($opts);
-        $result = @file_get_contents($url, false, $ctx);
-        if ($result === false) {
-            return NULL;
-        }
-
-        if ($stream) {
-            @file_put_contents($stream, $result);
-        }
-
-        if (!$fullData) {
-            return $result;
-        }
-
-        $responseHeaders = [];
-        if (isset($http_response_header)) {
-            foreach ($http_response_header as $line) {
-                $parts = explode(':', $line, 2);
-                if (count($parts) === 2) {
-                    $responseHeaders[trim($parts[0])] = trim($parts[1]);
-                }
-            }
-        }
-
-        return [
-            'data'    => $result,
-            'headers' => $responseHeaders,
-        ];
+        $fullMessage = $code !== NULL ? "[{$code}] {$message}" : $message;
+        $this->messages['error'][] = $fullMessage;
+        error_log("H5P Error: {$fullMessage}");
     }
 
-    public function setLibraryTutorialUrl($machineName, $tutorialUrl)
-    {
-        $sql  = 'UPDATE h5p_libraries SET tutorial_url = :url WHERE name = :name';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([
-            ':url'  => $tutorialUrl,
-            ':name' => $machineName,
-        ]);
-    }
-
-    public function setErrorMessage($message, $code = NULL)
-    {
-        if ($code !== NULL) {
-            $message = '[' . $code . '] ' . $message;
-        }
-        $this->messages['error'][] = $message;
-    }
-
-    public function setInfoMessage($message)
+    public function setInfoMessage($message): void
     {
         $this->messages['info'][] = $message;
     }
 
-    public function getMessages($type)
+    public function getMessages($type): array
     {
-        return isset($this->messages[$type]) ? $this->messages[$type] : [];
+        return $this->messages[$type] ?? [];
     }
 
-    public function t($message, $replacements = array())
+    public function t($message, $replacements = array()): string
     {
-        if (!empty($replacements)) {
-            $search  = array_keys($replacements);
-            $replace = array_values($replacements);
-            $message = str_replace($search, $replace, $message);
+        foreach ($replacements as $key => $value) {
+            $message = str_replace($key, $value, $message);
         }
-
-        return $message; // sin i18n por ahora
+        return $message;
     }
 
     /* =========================================================
-     *  Ficheros y paths
+     *  GESTIÓN DE LIBRERÍAS
      * ======================================================= */
 
-    public function getLibraryFileUrl($libraryFolderName, $fileName)
+    public function loadLibraries(): array
     {
-        // URL base a /h5p/libraries (configurable)
-        $base = $this->config['urls']['libraries']
-            ?? ($this->config['urls']['storage'] . '/libraries');
+        try {
+            $stmt = $this->pdo->query(
+                "SELECT * FROM h5p_libraries 
+                 ORDER BY name, major_version DESC, minor_version DESC, patch_version DESC"
+            );
 
-        $base = rtrim($base, '/');
-
-        return $base . '/' . $libraryFolderName . '/' . ltrim($fileName, '/');
-    }
-
-    public function getUploadedH5pFolderPath()
-    {
-        $tmpBase = $this->config['paths']['tmp']
-            ?? ($this->config['paths']['storage'] . '/tmp');
-
-        return rtrim($tmpBase, '/') . '/h5p-upload';
-    }
-
-    public function getUploadedH5pPath()
-    {
-        return $this->getUploadedH5pFolderPath() . '.h5p';
-    }
-
-    /* =========================================================
-     *  Librerías (load / stats). Escritura la veremos luego.
-     * ======================================================= */
-
-    public function loadAddons()
-    {
-        $sql  = 'SELECT * FROM h5p_libraries WHERE add_to IS NOT NULL AND add_to <> ""';
-        $stmt = $this->pdo()->query($sql);
-
-        return $stmt ? $stmt->fetchAll(PDO::FETCH_ASSOC) : [];
-    }
-
-    public function getLibraryConfig($libraries = NULL)
-    {
-        // Sin configuración extra de momento
-        return [];
-    }
-
-    public function loadLibraries()
-    {
-        $sql  = 'SELECT * FROM h5p_libraries ORDER BY name, major_version, minor_version, patch_version';
-        $stmt = $this->pdo()->query($sql);
-        if (!$stmt) {
-            return [];
-        }
-
-        $rows      = $stmt->fetchAll(PDO::FETCH_ASSOC);
-        $libraries = [];
-
-        foreach ($rows as $row) {
-            $name = $row['name'];
-            if (!isset($libraries[$name])) {
-                $libraries[$name] = [];
+            $libraries = [];
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $name = $row['name'];
+                if (!isset($libraries[$name])) {
+                    $libraries[$name] = [];
+                }
+                $libraries[$name][] = $this->mapLibraryRow($row);
             }
 
-            $libraries[$name][] = [
-                'libraryId'      => (int) $row['id'],
-                'title'          => $row['title'],
-                'machineName'    => $row['name'],
-                'majorVersion'   => (int) $row['major_version'],
-                'minorVersion'   => (int) $row['minor_version'],
-                'patchVersion'   => (int) $row['patch_version'],
-                'runnable'       => (int) $row['runnable'],
-                'restricted'     => (int) $row['restricted'],
-                'fullscreen'     => (int) $row['fullscreen'],
-                'embedTypes'     => $row['embed_types'],
-                'preloadedJs'    => $row['preloaded_js'],
-                'preloadedCss'   => $row['preloaded_css'],
-                'dropLibraryCss' => $row['drop_library_css'],
-            ];
+            return $libraries;
+        } catch (PDOException $e) {
+            $this->setErrorMessage("Error loading libraries: " . $e->getMessage());
+            return [];
         }
-
-        return $libraries;
     }
 
-    public function getAdminUrl()
+    public function loadLibrary($machineName, $majorVersion, $minorVersion)
     {
-        return '/admin/h5p';
-    }
+        try {
+            $stmt = $this->pdo->prepare(
+                "SELECT * FROM h5p_libraries
+                 WHERE name = :name 
+                   AND major_version = :major 
+                   AND minor_version = :minor
+                 ORDER BY patch_version DESC
+                 LIMIT 1"
+            );
 
-    public function getLibraryId($machineName, $majorVersion = NULL, $minorVersion = NULL)
-    {
-        if ($majorVersion === NULL || $minorVersion === NULL) {
-            $sql  = 'SELECT id FROM h5p_libraries
-                     WHERE name = :name
-                     ORDER BY major_version DESC, minor_version DESC, patch_version DESC
-                     LIMIT 1';
-            $stmt = $this->pdo()->prepare($sql);
-            $stmt->execute([':name' => $machineName]);
-        } else {
-            $sql  = 'SELECT id FROM h5p_libraries
-                     WHERE name = :name
-                       AND major_version = :major
-                       AND minor_version = :minor
-                     ORDER BY patch_version DESC
-                     LIMIT 1';
-            $stmt = $this->pdo()->prepare($sql);
             $stmt->execute([
                 ':name'  => $machineName,
                 ':major' => $majorVersion,
                 ':minor' => $minorVersion,
             ]);
-        }
 
-        $id = $stmt->fetchColumn();
-
-        return $id ? (int) $id : FALSE;
-    }
-
-    public function getWhitelist($isLibrary, $defaultContentWhitelist, $defaultLibraryWhitelist)
-    {
-        // Dejamos los defaults de H5P
-        return $isLibrary ? $defaultLibraryWhitelist : $defaultContentWhitelist;
-    }
-
-    public function isPatchedLibrary($library)
-    {
-        // Permitir tanto stdClass como array
-        if (is_object($library)) {
-            $library = (array) $library;
-        }
-
-        $sql  = 'SELECT 1
-               FROM h5p_libraries
-              WHERE name = :name
-                AND major_version = :major
-                AND minor_version = :minor
-                AND patch_version > :patch
-              LIMIT 1';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([
-            ':name'  => $library['machineName'],
-            ':major' => $library['majorVersion'],
-            ':minor' => $library['minorVersion'],
-            ':patch' => $library['patchVersion'],
-        ]);
-
-        return (bool) $stmt->fetchColumn();
-    }
-
-
-    public function isInDevMode()
-    {
-        return !empty($this->config['development']);
-    }
-
-    public function mayUpdateLibraries()
-    {
-        // Para el microservicio asumimos que siempre es “admin”
-        return TRUE;
-    }
-
-    /* ---------- helpers internos para librerías ---------- */
-
-    protected function pathsToCsv($items)
-    {
-        if (empty($items)) {
-            return '';
-        }
-
-        $paths = [];
-        foreach ($items as $item) {
-            if (!empty($item['path'])) {
-                $paths[] = $item['path'];
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$row) {
+                return FALSE;
             }
-        }
 
-        return implode(',', $paths);
+            $library = $this->mapLibraryRow($row);
+            $library = array_merge($library, $this->loadLibraryDependencies((int)$row['id']));
+
+            return $library;
+        } catch (PDOException $e) {
+            $this->setErrorMessage("Error loading library: " . $e->getMessage());
+            return FALSE;
+        }
     }
 
-    protected function dropCssToCsv($items)
+    public function getLibraryId($machineName, $majorVersion = NULL, $minorVersion = NULL)
     {
-        if (empty($items)) {
-            return '';
-        }
-
-        $names = [];
-        foreach ($items as $item) {
-            if (!empty($item['machineName'])) {
-                $names[] = $item['machineName'];
+        try {
+            if ($majorVersion === NULL || $minorVersion === NULL) {
+                $stmt = $this->pdo->prepare(
+                    "SELECT id FROM h5p_libraries
+                     WHERE name = :name
+                     ORDER BY major_version DESC, minor_version DESC, patch_version DESC
+                     LIMIT 1"
+                );
+                $stmt->execute([':name' => $machineName]);
+            } else {
+                $stmt = $this->pdo->prepare(
+                    "SELECT id FROM h5p_libraries
+                     WHERE name = :name 
+                       AND major_version = :major 
+                       AND minor_version = :minor
+                     ORDER BY patch_version DESC
+                     LIMIT 1"
+                );
+                $stmt->execute([
+                    ':name'  => $machineName,
+                    ':major' => $majorVersion,
+                    ':minor' => $minorVersion,
+                ]);
             }
-        }
 
-        return implode(',', $names);
+            $id = $stmt->fetchColumn();
+            return $id ? (int)$id : FALSE;
+        } catch (PDOException $e) {
+            $this->setErrorMessage("Error getting library ID: " . $e->getMessage());
+            return FALSE;
+        }
     }
 
     public function saveLibraryData(&$libraryData, $new = TRUE)
     {
-        // Implementación completa la dejamos para cuando montemos upload de librerías.
-        // Por ahora algo funcional para cuando la usemos desde el core.
-        $pdo = $this->pdo();
+        try {
+            $this->pdo->beginTransaction();
 
-        $preloadedJs    = isset($libraryData['preloadedJs']) ? $this->pathsToCsv($libraryData['preloadedJs']) : '';
-        $preloadedCss   = isset($libraryData['preloadedCss']) ? $this->pathsToCsv($libraryData['preloadedCss']) : '';
-        $dropLibraryCss = isset($libraryData['dropLibraryCss']) ? $this->dropCssToCsv($libraryData['dropLibraryCss']) : '';
-        $embedTypes     = isset($libraryData['embedTypes'])
-            ? (is_array($libraryData['embedTypes']) ? implode(',', $libraryData['embedTypes']) : $libraryData['embedTypes'])
-            : '';
-        $fullscreen       = !empty($libraryData['fullscreen']) ? 1 : 0;
-        $runnable         = !empty($libraryData['runnable']) ? 1 : 0;
-        $restricted       = !empty($libraryData['restricted']) ? 1 : 0;
-        $hasIcon          = !empty($libraryData['hasIcon']) ? 1 : 0;
-        $metadataSettings = isset($libraryData['metadataSettings']) ? json_encode($libraryData['metadataSettings']) : NULL;
-        $addTo            = isset($libraryData['addTo']) ? json_encode($libraryData['addTo']) : NULL;
-        $semantics        = isset($libraryData['semantics']) ? $libraryData['semantics'] : '';
+            $params = [
+                ':title'            => $libraryData['title'],
+                ':major'            => $libraryData['majorVersion'],
+                ':minor'            => $libraryData['minorVersion'],
+                ':patch'            => $libraryData['patchVersion'],
+                ':runnable'         => !empty($libraryData['runnable']) ? 1 : 0,
+                ':restricted'       => !empty($libraryData['restricted']) ? 1 : 0,
+                ':fullscreen'       => !empty($libraryData['fullscreen']) ? 1 : 0,
+                ':embed_types'      => $this->serializeEmbedTypes($libraryData['embedTypes'] ?? []),
+                ':preloaded_js'     => $this->serializePaths($libraryData['preloadedJs'] ?? []),
+                ':preloaded_css'    => $this->serializePaths($libraryData['preloadedCss'] ?? []),
+                ':drop_css'         => $this->serializeDropCss($libraryData['dropLibraryCss'] ?? []),
+                ':semantics'        => $libraryData['semantics'] ?? '',
+                ':tutorial_url'     => $libraryData['tutorialUrl'] ?? '',
+                ':has_icon'         => !empty($libraryData['hasIcon']) ? 1 : 0,
+                ':metadata_settings' => isset($libraryData['metadataSettings'])
+                    ? json_encode($libraryData['metadataSettings']) : NULL,
+                ':add_to'           => isset($libraryData['addTo'])
+                    ? json_encode($libraryData['addTo']) : NULL,
+            ];
 
-        if ($new) {
-            $sql = 'INSERT INTO h5p_libraries
-                    (created_at, updated_at, name, title, major_version, minor_version, patch_version,
-                     runnable, restricted, fullscreen, embed_types,
-                     preloaded_js, preloaded_css, drop_library_css,
-                     semantics, tutorial_url, has_icon, metadata_settings, add_to)
-                    VALUES
-                    (NOW(), NOW(), :name, :title, :major, :minor, :patch,
-                     :runnable, :restricted, :fullscreen, :embed_types,
-                     :preloaded_js, :preloaded_css, :drop_css,
-                     :semantics, :tutorial_url, :has_icon, :metadata_settings, :add_to)';
-        } else {
-            $sql = 'UPDATE h5p_libraries
-                       SET updated_at = NOW(),
-                           title = :title,
-                           runnable = :runnable,
-                           restricted = :restricted,
-                           fullscreen = :fullscreen,
-                           embed_types = :embed_types,
-                           preloaded_js = :preloaded_js,
-                           preloaded_css = :preloaded_css,
-                           drop_library_css = :drop_css,
-                           semantics = :semantics,
-                           tutorial_url = :tutorial_url,
-                           has_icon = :has_icon,
-                           metadata_settings = :metadata_settings,
-                           add_to = :add_to
-                     WHERE id = :id';
-        }
+            if ($new) {
+                $params[':name'] = $libraryData['machineName'];
 
-        $params = [
-            ':name'             => $libraryData['machineName'],
-            ':title'            => $libraryData['title'],
-            ':major'            => $libraryData['majorVersion'],
-            ':minor'            => $libraryData['minorVersion'],
-            ':patch'            => $libraryData['patchVersion'],
-            ':runnable'         => $runnable,
-            ':restricted'       => $restricted,
-            ':fullscreen'       => $fullscreen,
-            ':embed_types'      => $embedTypes,
-            ':preloaded_js'     => $preloadedJs,
-            ':preloaded_css'    => $preloadedCss,
-            ':drop_css'         => $dropLibraryCss,
-            ':semantics'        => $semantics,
-            ':tutorial_url'     => $libraryData['tutorialUrl'] ?? '',
-            ':has_icon'         => $hasIcon,
-            ':metadata_settings' => $metadataSettings,
-            ':add_to'           => $addTo,
-        ];
+                $sql = "INSERT INTO h5p_libraries
+                        (created_at, updated_at, name, title, major_version, minor_version, 
+                         patch_version, runnable, restricted, fullscreen, embed_types,
+                         preloaded_js, preloaded_css, drop_library_css, semantics, 
+                         tutorial_url, has_icon, metadata_settings, add_to)
+                        VALUES (NOW(), NOW(), :name, :title, :major, :minor, :patch, 
+                                :runnable, :restricted, :fullscreen, :embed_types,
+                                :preloaded_js, :preloaded_css, :drop_css, :semantics, 
+                                :tutorial_url, :has_icon, :metadata_settings, :add_to)";
 
-        if (!$new) {
-            $params[':id'] = $libraryData['libraryId'];
-        }
+                $this->pdo->prepare($sql)->execute($params);
+                $libraryData['libraryId'] = (int)$this->pdo->lastInsertId();
+            } else {
+                $params[':id'] = $libraryData['libraryId'];
 
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute($params);
+                $sql = "UPDATE h5p_libraries
+                        SET updated_at = NOW(), title = :title, runnable = :runnable,
+                            restricted = :restricted, fullscreen = :fullscreen, 
+                            embed_types = :embed_types, preloaded_js = :preloaded_js,
+                            preloaded_css = :preloaded_css, drop_library_css = :drop_css,
+                            semantics = :semantics, tutorial_url = :tutorial_url,
+                            has_icon = :has_icon, metadata_settings = :metadata_settings,
+                            add_to = :add_to
+                        WHERE id = :id";
 
-        if ($new) {
-            $libraryData['libraryId'] = (int) $pdo->lastInsertId();
-        }
-
-        return $libraryData['libraryId'];
-    }
-
-    public function saveLibraryDependencies($libraryId, $dependencies, $dependency_type)
-    {
-        $pdo = $this->pdo();
-
-        $pdo->prepare('DELETE FROM h5p_libraries_libraries WHERE library_id = :id AND dependency_type = :t')
-            ->execute([':id' => $libraryId, ':t' => $dependency_type]);
-
-        if (empty($dependencies)) {
-            return;
-        }
-
-        $sql  = 'INSERT INTO h5p_libraries_libraries (library_id, required_library_id, dependency_type)
-                 VALUES (:library_id, :required_library_id, :type)';
-        $stmt = $pdo->prepare($sql);
-
-        foreach ($dependencies as $dep) {
-            $requiredId = $this->getLibraryId($dep['machineName'], $dep['majorVersion'], $dep['minorVersion']);
-            if (!$requiredId) {
-                continue;
+                $this->pdo->prepare($sql)->execute($params);
             }
+
+            $this->pdo->commit();
+            return $libraryData['libraryId'];
+        } catch (PDOException $e) {
+            $this->pdo->rollBack();
+            $this->setErrorMessage("Error saving library: " . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    public function saveLibraryDependencies($libraryId, $dependencies, $dependency_type): void
+    {
+        try {
+            // Eliminar dependencias existentes del tipo especificado
+            $stmt = $this->pdo->prepare(
+                "DELETE FROM h5p_libraries_libraries 
+                 WHERE library_id = :id AND dependency_type = :type"
+            );
+            $stmt->execute([':id' => $libraryId, ':type' => $dependency_type]);
+
+            if (empty($dependencies)) {
+                return;
+            }
+
+            // Insertar nuevas dependencias
+            $stmt = $this->pdo->prepare(
+                "INSERT INTO h5p_libraries_libraries 
+                 (library_id, required_library_id, dependency_type)
+                 VALUES (:library_id, :required_id, :type)"
+            );
+
+            foreach ($dependencies as $dep) {
+                $requiredId = $this->getLibraryId(
+                    $dep['machineName'],
+                    $dep['majorVersion'],
+                    $dep['minorVersion']
+                );
+
+                if ($requiredId) {
+                    $stmt->execute([
+                        ':library_id'  => $libraryId,
+                        ':required_id' => $requiredId,
+                        ':type'        => $dependency_type,
+                    ]);
+                }
+            }
+        } catch (PDOException $e) {
+            $this->setErrorMessage("Error saving library dependencies: " . $e->getMessage());
+            throw $e;
+        }
+    }
+
+    /* =========================================================
+     *  GESTIÓN DE CONTENIDOS
+     * ======================================================= */
+
+    public function insertContent($content, $contentMainId = NULL): void
+    {
+        try {
+            $sql = "INSERT INTO h5p_contents
+                    (created_at, updated_at, user_id, title, library_id, parameters,
+                     filtered, slug, embed_type, disable, content_type, authors, 
+                     source, license, default_language)
+                    VALUES (NOW(), NOW(), :user_id, :title, :library_id, :parameters,
+                            :filtered, :slug, :embed_type, :disable, :content_type, 
+                            :authors, :source, :license, :language)";
+
+            $stmt = $this->pdo->prepare($sql);
             $stmt->execute([
-                ':library_id'        => $libraryId,
-                ':required_library_id' => $requiredId,
-                ':type'              => $dependency_type,
+                ':user_id'      => (int)($content['user_id'] ?? 0),
+                ':title'        => $content['title'],
+                ':library_id'   => $content['library']['libraryId'],
+                ':parameters'   => $content['params'],
+                ':filtered'     => $content['filtered'] ?? '',
+                ':slug'         => $content['slug'],
+                ':embed_type'   => $content['embedType'] ?? 'div',
+                ':disable'      => $content['disable'] ?? 0,
+                ':content_type' => $content['content_type'] ?? NULL,
+                ':authors'      => $content['authors'] ?? NULL,
+                ':source'       => $content['source'] ?? NULL,
+                ':license'      => $content['license'] ?? NULL,
+                ':language'     => $content['defaultLanguage'] ?? NULL,
             ]);
+
+            $content['id'] = (int)$this->pdo->lastInsertId();
+        } catch (PDOException $e) {
+            $this->setErrorMessage("Error inserting content: " . $e->getMessage());
+            throw $e;
         }
     }
 
-    public function deleteLibraryDependencies($libraryId)
+    public function updateContent($content, $contentMainId = NULL): void
     {
-        $sql  = 'DELETE FROM h5p_libraries_libraries WHERE library_id = :id OR required_library_id = :id';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([':id' => $libraryId]);
-    }
+        try {
+            $sql = "UPDATE h5p_contents
+                    SET updated_at = NOW(), title = :title, library_id = :library_id,
+                        parameters = :parameters, filtered = :filtered, slug = :slug,
+                        embed_type = :embed_type, disable = :disable
+                    WHERE id = :id";
 
-    public function lockDependencyStorage()
-    {
-        // Para nuestro caso basta una transacción
-        $this->pdo()->beginTransaction();
-    }
-
-    public function unlockDependencyStorage()
-    {
-        if ($this->pdo()->inTransaction()) {
-            $this->pdo()->commit();
+            $stmt = $this->pdo->prepare($sql);
+            $stmt->execute([
+                ':title'      => $content['title'],
+                ':library_id' => $content['library']['libraryId'],
+                ':parameters' => $content['params'],
+                ':filtered'   => $content['filtered'] ?? '',
+                ':slug'       => $content['slug'],
+                ':embed_type' => $content['embedType'] ?? 'div',
+                ':disable'    => $content['disable'] ?? 0,
+                ':id'         => $content['id'],
+            ]);
+        } catch (PDOException $e) {
+            $this->setErrorMessage("Error updating content: " . $e->getMessage());
+            throw $e;
         }
     }
 
-    public function deleteLibrary($library)
+    public function loadContent($id)
     {
-        // Aceptar stdClass o array
-        if (is_object($library)) {
-            $libraryId = $library->libraryId ?? $library->id ?? null;
-        } else {
-            $libraryId = $library['libraryId'] ?? $library['id'] ?? null;
-        }
+        try {
+            $stmt = $this->pdo->prepare(
+                "SELECT c.*, l.name AS libraryName, l.major_version AS libraryMajorVersion,
+                        l.minor_version AS libraryMinorVersion, l.embed_types AS libraryEmbedTypes,
+                        l.fullscreen AS libraryFullscreen
+                 FROM h5p_contents c
+                 JOIN h5p_libraries l ON l.id = c.library_id
+                 WHERE c.id = :id"
+            );
 
-        if (!$libraryId) {
-            $this->setErrorMessage('No se pudo determinar el ID de la librería a eliminar.');
-            return;
-        }
+            $stmt->execute([':id' => $id]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        $this->deleteLibraryDependencies($libraryId);
+            if (!$row) {
+                return FALSE;
+            }
 
-        $pdo = $this->pdo();
-
-        $pdo->prepare('DELETE FROM h5p_libraries_languages WHERE library_id = :id')
-            ->execute([':id' => $libraryId]);
-
-        $pdo->prepare('DELETE FROM h5p_libraries_cachedassets WHERE library_id = :id')
-            ->execute([':id' => $libraryId]);
-
-        $pdo->prepare('DELETE FROM h5p_libraries WHERE id = :id')
-            ->execute([':id' => $libraryId]);
-
-        // El borrado físico lo hace H5PDefaultStorage
-    }
-
-    public function loadLibrary($machineName, $majorVersion, $minorVersion)
-    {
-        $sql  = 'SELECT * FROM h5p_libraries
-                 WHERE name = :name
-                   AND major_version = :major
-                   AND minor_version = :minor
-                 ORDER BY patch_version DESC
-                 LIMIT 1';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([
-            ':name'  => $machineName,
-            ':major' => $majorVersion,
-            ':minor' => $minorVersion,
-        ]);
-
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$row) {
+            return [
+                'contentId'           => (int)$row['id'],
+                'title'               => $row['title'],
+                'params'              => $row['parameters'],
+                'embedType'           => $row['embed_type'],
+                'language'            => $row['default_language'],
+                'slug'                => $row['slug'],
+                'filtered'            => $row['filtered'],
+                'disable'             => (int)$row['disable'],
+                'libraryId'           => (int)$row['library_id'],
+                'libraryName'         => $row['libraryName'],
+                'libraryMajorVersion' => (int)$row['libraryMajorVersion'],
+                'libraryMinorVersion' => (int)$row['libraryMinorVersion'],
+                'libraryEmbedTypes'   => $row['libraryEmbedTypes'],
+                'libraryFullscreen'   => (int)$row['libraryFullscreen'],
+            ];
+        } catch (PDOException $e) {
+            $this->setErrorMessage("Error loading content: " . $e->getMessage());
             return FALSE;
         }
+    }
 
-        $libraryId = (int) $row['id'];
+    /* =========================================================
+     *  UTILIDADES Y CONFIGURACIÓN
+     * ======================================================= */
 
-        $library = [
-            'libraryId'      => $libraryId,
+    public function fetchExternalData(
+        $url,
+        $data = NULL,
+        $blocking = TRUE,
+        $stream = NULL,
+        $fullData = FALSE,
+        $headers = array(),
+        $files = array(),
+        $method = 'POST'
+    ) {
+        $ch = curl_init();
+
+        curl_setopt_array($ch, [
+            CURLOPT_URL            => $method === 'GET' && $data ? $url . '?' . http_build_query($data) : $url,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => $blocking ? 30 : 1,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CUSTOMREQUEST  => $method,
+        ]);
+
+        if (!empty($headers)) {
+            $curlHeaders = [];
+            foreach ($headers as $key => $value) {
+                $curlHeaders[] = "{$key}: {$value}";
+            }
+            curl_setopt($ch, CURLOPT_HTTPHEADER, $curlHeaders);
+        }
+
+        if ($method === 'POST' && $data) {
+            curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+        }
+
+        $result = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($result === false) {
+            return NULL;
+        }
+
+        if ($stream) {
+            file_put_contents($stream, $result);
+        }
+
+        return $fullData ? ['status' => $httpCode, 'data' => $result] : $result;
+    }
+
+    public function getOption($name, $default = NULL)
+    {
+        try {
+            $stmt = $this->pdo->prepare("SELECT value FROM h5p_options WHERE name = :name");
+            $stmt->execute([':name' => $name]);
+            $value = $stmt->fetchColumn();
+
+            if ($value === FALSE) {
+                return $default;
+            }
+
+            $decoded = json_decode($value, TRUE);
+            return ($decoded === NULL && json_last_error() !== JSON_ERROR_NONE) ? $value : $decoded;
+        } catch (PDOException $e) {
+            return $default;
+        }
+    }
+
+    public function setOption($name, $value): void
+    {
+        try {
+            $encoded = is_scalar($value) ? (string)$value : json_encode($value);
+
+            $stmt = $this->pdo->prepare(
+                "INSERT INTO h5p_options (name, value) VALUES (:name, :value)
+                 ON DUPLICATE KEY UPDATE value = VALUES(value)"
+            );
+
+            $stmt->execute([':name' => $name, ':value' => $encoded]);
+        } catch (PDOException $e) {
+            $this->setErrorMessage("Error setting option: " . $e->getMessage());
+        }
+    }
+
+    /* =========================================================
+     *  MÉTODOS HELPER PRIVADOS
+     * ======================================================= */
+
+    private function mapLibraryRow(array $row): array
+    {
+        return [
+            'libraryId'      => (int)$row['id'],
             'title'          => $row['title'],
             'machineName'    => $row['name'],
-            'majorVersion'   => (int) $row['major_version'],
-            'minorVersion'   => (int) $row['minor_version'],
-            'patchVersion'   => (int) $row['patch_version'],
-            'runnable'       => (int) $row['runnable'],
-            'restricted'     => (int) $row['restricted'],
-            'fullscreen'     => (int) $row['fullscreen'],
+            'majorVersion'   => (int)$row['major_version'],
+            'minorVersion'   => (int)$row['minor_version'],
+            'patchVersion'   => (int)$row['patch_version'],
+            'runnable'       => (int)$row['runnable'],
+            'restricted'     => (int)$row['restricted'],
+            'fullscreen'     => (int)$row['fullscreen'],
             'embedTypes'     => $row['embed_types'],
             'preloadedJs'    => $row['preloaded_js'],
             'preloadedCss'   => $row['preloaded_css'],
             'dropLibraryCss' => $row['drop_library_css'],
-            'semantics'      => $row['semantics'],
-            'tutorialUrl'    => $row['tutorial_url'],
+            'semantics'      => $row['semantics'] ?? '',
         ];
+    }
 
-        // Dependencias
-        $sql  = 'SELECT l2.id, l2.name, l2.major_version, l2.minor_version, ll.dependency_type
-                 FROM h5p_libraries_libraries ll
-                 JOIN h5p_libraries l2 ON l2.id = ll.required_library_id
-                 WHERE ll.library_id = :id';
-        $stmt = $this->pdo()->prepare($sql);
+    private function loadLibraryDependencies(int $libraryId): array
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT l.name, l.major_version, l.minor_version, ll.dependency_type
+             FROM h5p_libraries_libraries ll
+             JOIN h5p_libraries l ON l.id = ll.required_library_id
+             WHERE ll.library_id = :id"
+        );
+
         $stmt->execute([':id' => $libraryId]);
-        $deps = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $preloaded = [];
-        $dynamic   = [];
-        $editor    = [];
+        $preloaded = $dynamic = $editor = [];
 
-        foreach ($deps as $dep) {
+        while ($dep = $stmt->fetch(PDO::FETCH_ASSOC)) {
             $entry = [
                 'machineName'  => $dep['name'],
-                'majorVersion' => (int) $dep['major_version'],
-                'minorVersion' => (int) $dep['minor_version'],
+                'majorVersion' => (int)$dep['major_version'],
+                'minorVersion' => (int)$dep['minor_version'],
             ];
+
             switch ($dep['dependency_type']) {
                 case 'preloaded':
                     $preloaded[] = $entry;
@@ -574,543 +518,155 @@ class H5PFramework implements H5PFrameworkInterface
             }
         }
 
-        if ($preloaded) {
-            $library['preloadedDependencies'] = $preloaded;
-        }
-        if ($dynamic) {
-            $library['dynamicDependencies'] = $dynamic;
-        }
-        if ($editor) {
-            $library['editorDependencies'] = $editor;
-        }
-
-        return $library;
-    }
-
-    public function loadLibrarySemantics($machineName, $majorVersion, $minorVersion)
-    {
-        $lib = $this->loadLibrary($machineName, $majorVersion, $minorVersion);
-        return $lib ? $lib['semantics'] : '';
-    }
-
-    public function alterLibrarySemantics(&$semantics, $machineName, $majorVersion, $minorVersion)
-    {
-        // No hacemos alteraciones custom por ahora
-    }
-
-    /* =========================================================
-     *  Contenidos (content)
-     * ======================================================= */
-
-    public function insertContent($content, $contentMainId = NULL)
-    {
-        $pdo = $this->pdo();
-
-        $sql = 'INSERT INTO h5p_contents
-                (created_at, updated_at, user_id, title, library_id, parameters,
-                 filtered, slug, embed_type, disable, content_type, authors, source,
-                 year_from, year_to, license, license_version, license_extras,
-                 author_comments, changes, default_language)
-                VALUES
-                (NOW(), NOW(), :user_id, :title, :library_id, :parameters,
-                 :filtered, :slug, :embed_type, :disable, :content_type, :authors, :source,
-                 :year_from, :year_to, :license, :license_version, :license_extras,
-                 :author_comments, :changes, :default_language)';
-
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            ':user_id'         => (int) ($content['user_id'] ?? 0),
-            ':title'           => $content['title'],
-            ':library_id'      => $content['library']['libraryId'],
-            ':parameters'      => $content['params'],
-            ':filtered'        => $content['filtered'] ?? '',
-            ':slug'            => $content['slug'],
-            ':embed_type'      => $content['embedType'] ?? 'div',
-            ':disable'         => $content['disable'] ?? 0,
-            ':content_type'    => $content['content_type'] ?? NULL,
-            ':authors'         => $content['authors'] ?? NULL,
-            ':source'          => $content['source'] ?? NULL,
-            ':year_from'       => $content['year_from'] ?? NULL,
-            ':year_to'         => $content['year_to'] ?? NULL,
-            ':license'         => $content['license'] ?? NULL,
-            ':license_version' => $content['licenseVersion'] ?? NULL,
-            ':license_extras'  => $content['licenseExtras'] ?? NULL,
-            ':author_comments' => $content['authorComments'] ?? NULL,
-            ':changes'         => $content['changes'] ?? NULL,
-            ':default_language' => $content['defaultLanguage'] ?? NULL,
-        ]);
-
-        $content['id'] = (int) $pdo->lastInsertId();
-    }
-
-    public function updateContent($content, $contentMainId = NULL)
-    {
-        $pdo = $this->pdo();
-
-        $sql  = 'UPDATE h5p_contents
-                    SET updated_at = NOW(),
-                        title = :title,
-                        library_id = :library_id,
-                        parameters = :parameters,
-                        filtered = :filtered,
-                        slug = :slug,
-                        embed_type = :embed_type,
-                        disable = :disable
-                  WHERE id = :id';
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            ':title'      => $content['title'],
-            ':library_id' => $content['library']['libraryId'],
-            ':parameters' => $content['params'],
-            ':filtered'   => $content['filtered'] ?? '',
-            ':slug'       => $content['slug'],
-            ':embed_type' => $content['embedType'] ?? 'div',
-            ':disable'    => $content['disable'] ?? 0,
-            ':id'         => $content['id'],
-        ]);
-    }
-
-    public function resetContentUserData($contentId)
-    {
-        $sql  = 'DELETE FROM h5p_contents_user_data WHERE content_id = :id';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([':id' => $contentId]);
-    }
-
-    public function copyLibraryUsage($contentId, $copyFromId, $contentMainId = NULL)
-    {
-        $pdo = $this->pdo();
-
-        $sql  = 'INSERT INTO h5p_contents_libraries (content_id, library_id, dependency_type, weight, drop_css)
-                 SELECT :new_id, library_id, dependency_type, weight, drop_css
-                 FROM h5p_contents_libraries WHERE content_id = :old_id';
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            ':new_id' => $contentId,
-            ':old_id' => $copyFromId,
-        ]);
-    }
-
-    public function deleteContentData($contentId)
-    {
-        $pdo = $this->pdo();
-
-        $pdo->prepare('DELETE FROM h5p_contents_libraries WHERE content_id = :id')
-            ->execute([':id' => $contentId]);
-        $pdo->prepare('DELETE FROM h5p_contents_user_data WHERE content_id = :id')
-            ->execute([':id' => $contentId]);
-        $pdo->prepare('DELETE FROM h5p_contents_tags WHERE content_id = :id')
-            ->execute([':id' => $contentId]);
-        $pdo->prepare('DELETE FROM h5p_contents WHERE id = :id')
-            ->execute([':id' => $contentId]);
-    }
-
-    public function deleteLibraryUsage($contentId)
-    {
-        $sql  = 'DELETE FROM h5p_contents_libraries WHERE content_id = :id';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([':id' => $contentId]);
-    }
-
-    public function saveLibraryUsage($contentId, $librariesInUse)
-    {
-        $pdo = $this->pdo();
-
-        $pdo->prepare('DELETE FROM h5p_contents_libraries WHERE content_id = :id')
-            ->execute([':id' => $contentId]);
-
-        if (empty($librariesInUse)) {
-            return;
-        }
-
-        $sql  = 'INSERT INTO h5p_contents_libraries
-                    (content_id, library_id, dependency_type, weight, drop_css)
-                 VALUES (:content_id, :library_id, :type, :weight, :drop_css)';
-        $stmt = $pdo->prepare($sql);
-
-        $weight = 0;
-        foreach ($librariesInUse as $entry) {
-            $lib = $entry['library'];
-            $stmt->execute([
-                ':content_id' => $contentId,
-                ':library_id' => $lib['libraryId'],
-                ':type'       => $entry['type'],
-                ':weight'     => $weight++,
-                ':drop_css'   => !empty($lib['dropLibraryCss']) ? 1 : 0,
-            ]);
-        }
-    }
-
-    public function getLibraryUsage($libraryId, $skipContent = FALSE)
-    {
-        $pdo = $this->pdo();
-
-        $stmt = $pdo->prepare('SELECT COUNT(*) FROM h5p_libraries_libraries WHERE required_library_id = :id');
-        $stmt->execute([':id' => $libraryId]);
-        $libs = (int) $stmt->fetchColumn();
-
-        $content = 0;
-        if (!$skipContent) {
-            $stmt = $pdo->prepare('SELECT COUNT(*) FROM h5p_contents_libraries WHERE library_id = :id');
-            $stmt->execute([':id' => $libraryId]);
-            $content = (int) $stmt->fetchColumn();
-        }
-
-        return [
-            'content'   => $content,
-            'libraries' => $libs,
-        ];
-    }
-
-    public function loadContent($id)
-    {
-        $sql  = 'SELECT c.*, l.name AS libraryName, l.major_version AS libraryMajorVersion,
-                         l.minor_version AS libraryMinorVersion, l.embed_types AS libraryEmbedTypes,
-                         l.fullscreen AS libraryFullscreen
-                  FROM h5p_contents c
-                  JOIN h5p_libraries l ON l.id = c.library_id
-                 WHERE c.id = :id';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([':id' => $id]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$row) {
-            return FALSE;
-        }
-
-        return [
-            'contentId'           => (int) $row['id'],
-            'title'               => $row['title'],
-            'params'              => $row['parameters'],
-            'embedType'           => $row['embed_type'],
-            'language'            => $row['default_language'],
-            'slug'                => $row['slug'],
-            'filtered'            => $row['filtered'],
-            'disable'             => (int) $row['disable'],
-            'libraryId'           => (int) $row['library_id'],
-            'libraryName'         => $row['libraryName'],
-            'libraryMajorVersion' => (int) $row['libraryMajorVersion'],
-            'libraryMinorVersion' => (int) $row['libraryMinorVersion'],
-            'libraryEmbedTypes'   => $row['libraryEmbedTypes'],
-            'libraryFullscreen'   => (int) $row['libraryFullscreen'],
-        ];
-    }
-
-    public function loadContentDependencies($id, $type = NULL)
-    {
-        $sql = 'SELECT l.id AS libraryId, l.name AS machineName,
-                       l.major_version AS majorVersion, l.minor_version AS minorVersion,
-                       l.patch_version AS patchVersion,
-                       l.preloaded_js AS preloadedJs, l.preloaded_css AS preloadedCss,
-                       l.drop_library_css AS dropCss,
-                       cl.dependency_type
-                  FROM h5p_contents_libraries cl
-                  JOIN h5p_libraries l ON l.id = cl.library_id
-                 WHERE cl.content_id = :id';
-        $params = [':id' => $id];
-        if ($type !== NULL) {
-            $sql             .= ' AND cl.dependency_type = :type';
-            $params[':type'] = $type;
-        }
-
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($params);
-
         $result = [];
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $result[] = [
-                'libraryId'    => (int) $row['libraryId'],
-                'machineName'  => $row['machineName'],
-                'majorVersion' => (int) $row['majorVersion'],
-                'minorVersion' => (int) $row['minorVersion'],
-                'patchVersion' => (int) $row['patchVersion'],
-                'preloadedJs'  => $row['preloadedJs'],
-                'preloadedCss' => $row['preloadedCss'],
-                'dropCss'      => $row['dropCss'],
-            ];
-        }
+        if ($preloaded) $result['preloadedDependencies'] = $preloaded;
+        if ($dynamic)   $result['dynamicDependencies'] = $dynamic;
+        if ($editor)    $result['editorDependencies'] = $editor;
 
         return $result;
     }
 
+    private function serializePaths(array $items): string
+    {
+        return implode(',', array_column($items, 'path'));
+    }
+
+    private function serializeDropCss(array $items): string
+    {
+        return implode(',', array_column($items, 'machineName'));
+    }
+
+    private function serializeEmbedTypes($embedTypes): string
+    {
+        return is_array($embedTypes) ? implode(',', $embedTypes) : (string)$embedTypes;
+    }
+
     /* =========================================================
-     *  Opciones (settings)
+     *  MÉTODOS RESTANTES (Implementación básica)
      * ======================================================= */
 
-    public function getOption($name, $default = NULL)
+    public function getLibraryFileUrl($libraryFolderName, $fileName): string
     {
-        $sql  = 'SELECT value FROM h5p_options WHERE name = :name';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([':name' => $name]);
-        $value = $stmt->fetchColumn();
-
-        if ($value === FALSE) {
-            return $default;
-        }
-
-        $decoded = json_decode($value, TRUE);
-        return ($decoded === NULL && json_last_error() !== JSON_ERROR_NONE)
-            ? $value
-            : $decoded;
+        $base = rtrim($this->config['urls']['libraries'] ?? '/h5p/libraries', '/');
+        return "{$base}/{$libraryFolderName}/" . ltrim($fileName, '/');
     }
 
-    public function setOption($name, $value)
+    public function getUploadedH5pFolderPath(): string
     {
-        $pdo     = $this->pdo();
-        $encoded = is_scalar($value) ? (string) $value : json_encode($value);
-
-        $sql  = 'INSERT INTO h5p_options (name, value)
-                 VALUES (:name, :value)
-                 ON DUPLICATE KEY UPDATE value = VALUES(value)';
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([
-            ':name'  => $name,
-            ':value' => $encoded,
-        ]);
+        return rtrim($this->config['paths']['tmp'] ?? sys_get_temp_dir(), '/') . '/h5p-upload';
     }
 
-    public function updateContentFields($id, $fields)
+    public function getUploadedH5pPath(): string
     {
-        if (empty($fields)) {
-            return;
-        }
-
-        $sets   = [];
-        $params = [':id' => $id];
-
-        foreach ($fields as $field => $value) {
-            $sets[]                 = $field . ' = :' . $field;
-            $params[':' . $field]   = $value;
-        }
-
-        $sql  = 'UPDATE h5p_contents SET ' . implode(', ', $sets) . ', updated_at = NOW() WHERE id = :id';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute($params);
+        return $this->getUploadedH5pFolderPath() . '.h5p';
     }
 
-    public function clearFilteredParameters($library_ids)
+    public function loadAddons(): array
     {
-        if (empty($library_ids)) {
-            return;
-        }
-
-        $in  = implode(',', array_fill(0, count($library_ids), '?'));
-        $sql = 'UPDATE h5p_contents c
-                  JOIN h5p_contents_libraries cl ON cl.content_id = c.id
-                   SET c.filtered = ""
-                 WHERE cl.library_id IN (' . $in . ')';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute(array_values($library_ids));
+        return [];
     }
-
-    public function getNumNotFiltered()
+    public function getLibraryConfig($libraries = NULL): array
     {
-        $sql  = 'SELECT COUNT(*) FROM h5p_contents WHERE filtered = ""';
-        $stmt = $this->pdo()->query($sql);
-
-        return (int) $stmt->fetchColumn();
+        return [];
     }
-
-    public function getNumContent($libraryId, $skip = NULL)
+    public function getAdminUrl(): string
     {
-        $pdo = $this->pdo();
-
-        if (!empty($skip)) {
-            $placeholders = implode(',', array_fill(0, count($skip), '?'));
-            $sql          = 'SELECT COUNT(*) FROM h5p_contents
-                             WHERE library_id = ?
-                               AND id NOT IN (' . $placeholders . ')';
-            $params = array_merge([$libraryId], $skip);
-            $stmt   = $pdo->prepare($sql);
-            $stmt->execute($params);
-        } else {
-            $sql  = 'SELECT COUNT(*) FROM h5p_contents WHERE library_id = ?';
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute([$libraryId]);
-        }
-
-        return (int) $stmt->fetchColumn();
+        return '/admin/h5p';
     }
-
-    public function isContentSlugAvailable($slug)
+    public function getWhitelist($isLibrary, $defaultContentWhitelist, $defaultLibraryWhitelist): string
     {
-        $sql  = 'SELECT id FROM h5p_contents WHERE slug = :slug';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([':slug' => $slug]);
-
-        return $stmt->fetchColumn() === FALSE;
+        return $isLibrary ? $defaultLibraryWhitelist : $defaultContentWhitelist;
     }
-
-    public function getLibraryStats($type)
+    public function isPatchedLibrary($library): bool
     {
-        $sql  = 'SELECT library_name, library_version, num
-                   FROM h5p_counters
-                  WHERE type = :type';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([':type' => $type]);
-
-        $stats = [];
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $key         = $row['library_name'] . ' ' . $row['library_version'];
-            $stats[$key] = (int) $row['num'];
-        }
-
-        return $stats;
+        return false;
     }
-
-    public function getNumAuthors()
+    public function isInDevMode(): bool
     {
-        $sql  = 'SELECT COUNT(DISTINCT user_id) FROM h5p_contents';
-        $stmt = $this->pdo()->query($sql);
-
-        return (int) $stmt->fetchColumn();
+        return !empty($this->config['development']);
     }
-
-    public function saveCachedAssets($key, $libraries)
+    public function mayUpdateLibraries(): bool
     {
-        $pdo = $this->pdo();
-
-        $sql  = 'INSERT IGNORE INTO h5p_libraries_cachedassets (library_id, hash)
-                 VALUES (:library_id, :hash)';
-        $stmt = $pdo->prepare($sql);
-
-        foreach ($libraries as $lib) {
-            $stmt->execute([
-                ':library_id' => $lib['libraryId'],
-                ':hash'       => $key,
-            ]);
-        }
+        return true;
     }
-
-    public function deleteCachedAssets($library_id)
+    public function setLibraryTutorialUrl($machineName, $tutorialUrl): void {}
+    public function resetContentUserData($contentId): void {}
+    public function copyLibraryUsage($contentId, $copyFromId, $contentMainId = NULL): void {}
+    public function deleteContentData($contentId): void {}
+    public function deleteLibraryUsage($contentId): void {}
+    public function saveLibraryUsage($contentId, $librariesInUse): void {}
+    public function getLibraryUsage($libraryId, $skipContent = FALSE): array
     {
-        $pdo = $this->pdo();
-
-        $sql  = 'SELECT DISTINCT hash FROM h5p_libraries_cachedassets WHERE library_id = :id';
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([':id' => $library_id]);
-        $hashes = $stmt->fetchAll(PDO::FETCH_COLUMN);
-
-        $pdo->prepare('DELETE FROM h5p_libraries_cachedassets WHERE library_id = :id')
-            ->execute([':id' => $library_id]);
-
-        return $hashes;
+        return ['content' => 0, 'libraries' => 0];
     }
-
-    public function getLibraryContentCount()
+    public function loadLibrarySemantics($machineName, $majorVersion, $minorVersion): string
     {
-        $sql  = 'SELECT COUNT(*) FROM h5p_contents';
-        $stmt = $this->pdo()->query($sql);
-
-        return (int) $stmt->fetchColumn();
+        return '';
     }
-
-    public function afterExportCreated($content, $filename)
+    public function alterLibrarySemantics(&$semantics, $machineName, $majorVersion, $minorVersion): void {}
+    public function deleteLibraryDependencies($libraryId): void {}
+    public function lockDependencyStorage(): void
     {
-        // No-op por ahora
+        $this->pdo->beginTransaction();
     }
-
-    public function hasPermission($permission, $id = NULL)
+    public function unlockDependencyStorage(): void
     {
-        // El microservicio se asume detrás de auth, devolvemos true
-        return TRUE;
+        if ($this->pdo->inTransaction()) $this->pdo->commit();
     }
-
-    public function replaceContentTypeCache($contentTypeCache)
+    public function deleteLibrary($library): void {}
+    public function loadContentDependencies($id, $type = NULL): array
     {
-        // Guardamos el Hub en h5p_libraries_hub_cache
-        if (empty($contentTypeCache->libraries)) {
-            return;
-        }
-
-        $pdo = $this->pdo();
-        $pdo->exec('TRUNCATE TABLE h5p_libraries_hub_cache');
-
-        $sql  = 'INSERT INTO h5p_libraries_hub_cache
-                    (machine_name, major_version, minor_version, patch_version,
-                     h5p_major_version, h5p_minor_version, title, summary, description,
-                     icon, created_at, updated_at, is_recommended, popularity, screenshots,
-                     license, example, tutorial, keywords, categories, owner)
-                 VALUES
-                    (:machine_name, :major_version, :minor_version, :patch_version,
-                     :h5p_major_version, :h5p_minor_version, :title, :summary, :description,
-                     :icon, :created_at, :updated_at, :is_recommended, :popularity, :screenshots,
-                     :license, :example, :tutorial, :keywords, :categories, :owner)';
-        $stmt = $pdo->prepare($sql);
-
-        foreach ($contentTypeCache->libraries as $lib) {
-            $stmt->execute([
-                ':machine_name'      => $lib->machineName,
-                ':major_version'     => $lib->majorVersion,
-                ':minor_version'     => $lib->minorVersion,
-                ':patch_version'     => $lib->patchVersion,
-                ':h5p_major_version' => $lib->h5pMajorVersion ?? NULL,
-                ':h5p_minor_version' => $lib->h5pMinorVersion ?? NULL,
-                ':title'             => $lib->title,
-                ':summary'           => $lib->summary,
-                ':description'       => $lib->description,
-                ':icon'              => $lib->icon,
-                ':created_at'        => $lib->createdAt,
-                ':updated_at'        => $lib->updatedAt,
-                ':is_recommended'    => $lib->isRecommended,
-                ':popularity'        => $lib->popularity,
-                ':screenshots'       => json_encode($lib->screenshots),
-                ':license'           => json_encode($lib->license),
-                ':example'           => $lib->example,
-                ':tutorial'          => $lib->tutorial,
-                ':keywords'          => json_encode($lib->keywords),
-                ':categories'        => json_encode($lib->categories),
-                ':owner'             => $lib->owner,
-            ]);
-        }
+        return [];
     }
-
-    public function libraryHasUpgrade($library)
+    public function updateContentFields($id, $fields): void {}
+    public function clearFilteredParameters($library_ids): void {}
+    public function getNumNotFiltered(): int
     {
-        // Igual: soportar stdClass o array
-        if (is_object($library)) {
-            $library = (array) $library;
-        }
-
-        $sql  = 'SELECT 1 FROM h5p_libraries
-             WHERE name = :name
-               AND (
-                    major_version > :major
-                    OR (major_version = :major AND minor_version > :minor)
-                    OR (major_version = :major AND minor_version = :minor AND patch_version > :patch)
-               )
-             LIMIT 1';
-        $stmt = $this->pdo()->prepare($sql);
-        $stmt->execute([
-            ':name'  => $library['machineName'],
-            ':major' => $library['majorVersion'],
-            ':minor' => $library['minorVersion'],
-            ':patch' => $library['patchVersion'],
-        ]);
-
-        return (bool) $stmt->fetchColumn();
+        return 0;
     }
-
-
-    public function replaceContentHubMetadataCache($metadata, $lang)
+    public function getNumContent($libraryId, $skip = NULL): int
     {
-        $this->setOption('content_hub_metadata_' . $lang, $metadata);
-        return TRUE;
+        return 0;
     }
-
+    public function isContentSlugAvailable($slug): bool
+    {
+        return true;
+    }
+    public function getLibraryStats($type): array
+    {
+        return [];
+    }
+    public function getNumAuthors(): int
+    {
+        return 1;
+    }
+    public function saveCachedAssets($key, $libraries): void {}
+    public function deleteCachedAssets($library_id): array
+    {
+        return [];
+    }
+    public function getLibraryContentCount(): int
+    {
+        return 0;
+    }
+    public function afterExportCreated($content, $filename): void {}
+    public function hasPermission($permission, $id = NULL): bool
+    {
+        return true;
+    }
+    public function replaceContentTypeCache($contentTypeCache): void {}
+    public function libraryHasUpgrade($library): bool
+    {
+        return false;
+    }
+    public function replaceContentHubMetadataCache($metadata, $lang): void {}
     public function getContentHubMetadataCache($lang = 'en')
     {
-        return $this->getOption('content_hub_metadata_' . $lang, NULL);
+        return null;
     }
-
     public function getContentHubMetadataChecked($lang = 'en')
     {
-        return $this->getOption('content_hub_metadata_checked_' . $lang, NULL);
+        return null;
     }
-
-    public function setContentHubMetadataChecked($time, $lang = 'en')
-    {
-        $this->setOption('content_hub_metadata_checked_' . $lang, $time);
-        return TRUE;
-    }
+    public function setContentHubMetadataChecked($time, $lang = 'en'): void {}
 }

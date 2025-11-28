@@ -6,8 +6,6 @@ use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
 use Slim\Factory\AppFactory;
 use App\H5P\Database;
-use App\H5P\H5PFramework;
-use App\H5P\Kernel as H5PKernel;
 
 
 
