@@ -553,14 +553,44 @@ class H5PFramework implements H5PFrameworkInterface
 
     public function getUploadedH5pFolderPath(): string
     {
-        return rtrim($this->config['paths']['tmp'] ?? sys_get_temp_dir(), '/') . '/h5p-upload';
+        // Get the temp directory from config
+        $tempPath = $this->config['paths']['temp'];
+
+        // The folder path is where H5P will extract the package contents
+        // Normalize path separators for Windows compatibility
+        $uploadPath = str_replace(['\\', '//'], '/', $tempPath . '/h5p-upload');
+
+        // Create directory if it doesn't exist
+        if (!is_dir($uploadPath)) {
+            mkdir($uploadPath, 0755, true);
+        }
+
+        return $uploadPath;
     }
 
     public function getUploadedH5pPath(): string
     {
-        return $this->getUploadedH5pFolderPath() . '.h5p';
-    }
+        // Get the temp directory from config
+        $tempPath = $this->config['paths']['temp'];
 
+        // The file path should point to the actual .h5p file in temp directory
+        // This is where the uploaded .h5p file should be located
+        // Check if there's a file in $_FILES first
+        if (isset($_FILES['h5p_file']['tmp_name']) && file_exists($_FILES['h5p_file']['tmp_name'])) {
+            return $_FILES['h5p_file']['tmp_name'];
+        }
+
+        // Fallback: look for any .h5p file in the temp directory
+        $tempPath = str_replace(['\\', '//'], '/', $tempPath);
+        $h5pFiles = glob($tempPath . '/*.h5p');
+
+        if (!empty($h5pFiles)) {
+            return $h5pFiles[0];
+        }
+
+        // Last resort: return expected path (even if file doesn't exist yet)
+        return $tempPath . '/uploaded.h5p';
+    }
     public function loadAddons(): array
     {
         return [];
@@ -654,19 +684,77 @@ class H5PFramework implements H5PFrameworkInterface
     {
         return true;
     }
-    public function replaceContentTypeCache($contentTypeCache): void {}
+
+
+    public function replaceContentTypeCache($contentTypeCache): void
+    {
+        if (!$contentTypeCache || !isset($contentTypeCache->contentTypes)) return;
+
+        $this->pdo->query("TRUNCATE TABLE h5p_libraries_hub_cache");
+
+        $stmt = $this->pdo->prepare("
+            INSERT INTO h5p_libraries_hub_cache (
+                machine_name, major_version, minor_version, patch_version,
+                h5p_major_version, h5p_minor_version, title, summary,
+                description, icon, created_at, updated_at, is_recommended,
+                popularity, screenshots, license, example, tutorial,
+                keywords, categories, owner
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+        ");
+
+        foreach ($contentTypeCache->contentTypes as $ct) {
+            $stmt->execute([
+                $ct->machineName,
+                $ct->majorVersion,
+                $ct->minorVersion,
+                $ct->patchVersion,
+                $ct->h5pMajorVersion,
+                $ct->h5pMinorVersion,
+                $ct->title,
+                $ct->summary,
+                $ct->description,
+                $ct->icon,
+                $ct->createdAt,
+                $ct->updatedAt,
+                $ct->isRecommended ? 1 : 0,
+                $ct->popularity,
+                json_encode($ct->screenshots),
+                json_encode($ct->license),
+                $ct->example,
+                $ct->tutorial,
+                json_encode($ct->keywords),
+                json_encode($ct->categories),
+                $ct->owner
+            ]);
+        }
+    }
+
     public function libraryHasUpgrade($library): bool
     {
         return false;
     }
-    public function replaceContentHubMetadataCache($metadata, $lang): void {}
+
+    public function replaceContentHubMetadataCache($metadata, $lang): void
+    {
+        $this->setOption('h5p_content_hub_metadata_' . $lang, json_encode($metadata));
+    }
+
     public function getContentHubMetadataCache($lang = 'en')
     {
-        return null;
+        $json = $this->getOption('h5p_content_hub_metadata_' . $lang);
+        return $json ? json_decode($json) : null;
     }
+
     public function getContentHubMetadataChecked($lang = 'en')
     {
-        return null;
+        return $this->getOption('h5p_content_hub_metadata_checked_' . $lang);
     }
-    public function setContentHubMetadataChecked($time, $lang = 'en'): void {}
+
+    public function setContentHubMetadataChecked($time, $lang = 'en'): bool
+    {
+        $this->setOption('h5p_content_hub_metadata_checked_' . $lang, $time);
+        return true;
+    }
 }

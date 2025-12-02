@@ -20,6 +20,7 @@ class ComposerStaticInitd5642cb4895e50d63efd867e2e67000f
         '138126db212e09ea471720e87b638b63' => __DIR__ . '/..' . '/h5p/h5p-editor/h5peditor-ajax.class.php',
         '920009c17c818a2668db044d76f129b9' => __DIR__ . '/..' . '/h5p/h5p-editor/h5peditor-storage.interface.php',
         '101279c1523ab77899b4b6921c749836' => __DIR__ . '/..' . '/h5p/h5p-editor/h5peditor-ajax.interface.php',
+        'b33e3d135e5d9e47d845c576147bda89' => __DIR__ . '/..' . '/php-di/php-di/src/functions.php',
     );
 
     public static $prefixLengthsPsr4 = array (
@@ -35,10 +36,22 @@ class ComposerStaticInitd5642cb4895e50d63efd867e2e67000f
             'Psr\\Http\\Message\\' => 17,
             'Psr\\Container\\' => 14,
         ),
+        'L' =>
+        array (
+            'Laravel\\SerializableClosure\\' => 28,
+        ),
+        'I' =>
+        array (
+            'Invoker\\' => 8,
+        ),
         'F' =>
         array (
             'Fig\\Http\\Message\\' => 17,
             'FastRoute\\' => 10,
+        ),
+        'D' =>
+        array (
+            'DI\\' => 3,
         ),
         'A' =>
         array (
@@ -73,6 +86,14 @@ class ComposerStaticInitd5642cb4895e50d63efd867e2e67000f
         array (
             0 => __DIR__ . '/..' . '/psr/container/src',
         ),
+        'Laravel\\SerializableClosure\\' =>
+        array (
+            0 => __DIR__ . '/..' . '/laravel/serializable-closure/src',
+        ),
+        'Invoker\\' =>
+        array (
+            0 => __DIR__ . '/..' . '/php-di/invoker/src',
+        ),
         'Fig\\Http\\Message\\' =>
         array (
             0 => __DIR__ . '/..' . '/fig/http-message-util/src',
@@ -80,6 +101,10 @@ class ComposerStaticInitd5642cb4895e50d63efd867e2e67000f
         'FastRoute\\' =>
         array (
             0 => __DIR__ . '/..' . '/nikic/fast-route/src',
+        ),
+        'DI\\' =>
+        array (
+            0 => __DIR__ . '/..' . '/php-di/php-di/src',
         ),
         'App\\' =>
         array (

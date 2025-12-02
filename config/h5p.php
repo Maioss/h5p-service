@@ -2,6 +2,19 @@
 
 declare(strict_types=1);
 
+// Obtener la raíz del proyecto de forma limpia
+// Si este archivo está en C:\xampp\htdocs\h5p-service\config\h5p.php
+// dirname(__DIR__) nos dará C:\xampp\htdocs\h5p-service
+$rootPath = realpath(dirname(__DIR__));
+
+// Detectar si estamos en HTTPS (opcional, pero útil)
+$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
+$host = $_SERVER['HTTP_HOST'] ?? 'localhost'; // ej: localhost:8080
+
+// DEFINIR TU RUTA BASE REAL
+// Si tu carpeta en htdocs es 'h5p-service', la URL base debe apuntar hasta 'public'
+$baseUrl = "$protocol://$host/";
+
 return [
     'db' => [
         'dsn'      => 'mysql:host=127.0.0.1;dbname=h5p_service;charset=utf8mb4',
@@ -13,21 +26,18 @@ return [
         ],
     ],
     'paths' => [
-        'content'    => __DIR__ . '/../storage/h5p/content',
-        'temp'       => __DIR__ . '/../storage/h5p/temp',
-        'editor_tmp' => __DIR__ . '/../storage/h5p/editor_tmp',
-        'libraries'  => __DIR__ . '/../storage/h5p/libraries',
+        // Usamos $rootPath para construir rutas absolutas sin ".."
+        'content'    => $rootPath . '/storage/h5p/content',
+        'temp'       => $rootPath . '/storage/h5p/temp',
+        'editor_tmp' => $rootPath . '/storage/h5p/editor_tmp',
+        'libraries'  => $rootPath . '/storage/h5p/libraries',
     ],
     'urls' => [
-        'base'    => 'http://localhost:8080',
-        // ...
-    ],
-
-    'urls' => [
-        // Base de tu microservicio (como lo ve .NET vía iframe)
-        'base'          => 'http://localhost:8080',
-        // URL pública donde servirás assets H5P
-        'h5p'           => 'http://localhost:8080/h5p', // luego veremos cómo exponer esto
-        'libraries_url' => 'http://localhost:8080/h5p/libraries',
+        'base'          => $baseUrl,
+        'h5p'           => $baseUrl . '/h5p',
+        'libraries_url' => $baseUrl . '/h5p/libraries',
+        // URLs estáticas para el Core y Editor (Lo que acabamos de copiar)
+        'core'          => $baseUrl . 'assets/h5p/core',
+        'editor'        => $baseUrl . 'assets/h5p/editor',
     ],
 ];
