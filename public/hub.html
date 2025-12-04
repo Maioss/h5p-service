@@ -90,6 +90,9 @@
                 method: 'GET',
                 dataType: 'json',
                 success: function (response) {
+
+                    debugger;
+
                     if (response.success) {
                         H5PIntegration.hub.contentTypes = response.contentTypes;
 
