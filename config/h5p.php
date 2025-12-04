@@ -9,11 +9,23 @@ $rootPath = realpath(dirname(__DIR__));
 
 // Detectar si estamos en HTTPS (opcional, pero útil)
 $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http';
-$host = $_SERVER['HTTP_HOST'] ?? 'localhost'; // ej: localhost:8080
+$host = $_SERVER['HTTP_HOST'] ?? 'localhost';
 
-// DEFINIR TU RUTA BASE REAL
-// Si tu carpeta en htdocs es 'h5p-service', la URL base debe apuntar hasta 'public'
-$baseUrl = "$protocol://$host/";
+// Detectar entorno y configurar baseUrl dinámicamente
+$isBuiltInServer = php_sapi_name() === 'cli-server';
+$scriptName = $_SERVER['SCRIPT_NAME'] ?? '';
+
+if ($isBuiltInServer) {
+    // Servidor integrado (puerto 8080): sin ruta adicional
+    $baseUrl = "$protocol://$host";
+} else {
+    // XAMPP o producción: detectar si estamos en subdirectorio
+    if (strpos($scriptName, '/h5p-service/public') !== false) {
+        $baseUrl = "$protocol://$host/h5p-service/public";
+    } else {
+        $baseUrl = "$protocol://$host";
+    }
+}
 
 return [
     'db' => [
@@ -37,7 +49,7 @@ return [
         'h5p'           => $baseUrl . '/h5p',
         'libraries_url' => $baseUrl . '/h5p/libraries',
         // URLs estáticas para el Core y Editor (Lo que acabamos de copiar)
-        'core'          => $baseUrl . 'assets/h5p/core',
-        'editor'        => $baseUrl . 'assets/h5p/editor',
+        'core'          => $baseUrl . '/assets/h5p/core',
+        'editor'        => $baseUrl . '/assets/h5p/editor',
     ],
 ];

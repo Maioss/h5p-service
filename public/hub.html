@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>H5P Content Type Hub</title>
+
+    <!-- H5P Hub CSS -->
+    <link rel="stylesheet" href="/assets/css/h5p-hub-client.css">
+
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Open Sans', Arial, sans-serif;
+            background: #f5f5f5;
+        }
+
+        .hub-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            color: #1a73d9;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="hub-container">
+        <h1>H5P Content Type Hub</h1>
+
+        <!-- El Hub se renderizará aquí -->
+        <div id="h5p-hub"></div>
+    </div>
+
+    <!-- jQuery (requerido por H5P) -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <!-- H5P Hub Client JS -->
+    <script src="/assets/js/h5p-hub-client.js"></script>
+
+    <script>
+        // Configuración del Hub
+        var H5PIntegration = {
+            baseUrl: window.location.origin,
+            url: '/h5p',
+            postUserStatistics: false,
+            ajax: {
+                setFinished: '/api/h5p/set-finished',
+                contentUserData: '/api/h5p/content-user-data'
+            },
+            saveFreq: false,
+            siteUrl: window.location.origin,
+            l10n: {
+                H5P: {
+                    // Traducciones básicas
+                    fullscreen: 'Fullscreen',
+                    disableFullscreen: 'Disable fullscreen',
+                    download: 'Download',
+                    copyrights: 'Rights of use',
+                    embed: 'Embed',
+                    size: 'Size',
+                    showAdvanced: 'Show advanced',
+                    hideAdvanced: 'Hide advanced'
+                }
+            },
+            hubIsEnabled: true,
+            // Configuración del Hub
+            hub: {
+                apiVersion: { major: 1, minor: 1 },
+                contentTypes: [],
+                contentTypeCache: '/api/content-types',
+                contentSearchUrl: 'https://api.h5p.org/v1/content-types/'
+            }
+        };
+
+        // Inicializar el Hub cuando el DOM esté listo
+        $(document).ready(function () {
+            // Cargar content types
+            $.ajax({
+                url: '/api/content-types',
+                method: 'GET',
+                dataType: 'json',
+                success: function (response) {
+                    if (response.success) {
+                        H5PIntegration.hub.contentTypes = response.contentTypes;
+
+                        // Inicializar el Hub Client
+                        // Nota: La implementación exacta depende de la versión del hub-client
+                        if (window.H5P && window.H5P.Hub) {
+                            new H5P.Hub($('#h5p-hub'), H5PIntegration.hub);
+                        } else {
+                            console.error('H5P Hub Client no está cargado correctamente');
+                        }
+                    }
+                },
+                error: function (xhr, status, error) {
+                    console.error('Error al cargar content types:', error);
+                    $('#h5p-hub').html('<p>Error al cargar el Hub. Ver consola para detalles.</p>');
+                }
+            });
+        });
+    </script>
+</body>
+
+</html>
