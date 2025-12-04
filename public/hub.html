@@ -44,7 +44,17 @@
     <!-- jQuery (requerido por H5P) -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
-    <!-- H5P Hub Client JS -->
+    <script>
+        // Puente necesario: H5P espera encontrar jQuery en H5P.jQuery
+        window.H5P = window.H5P || {};
+        H5P.jQuery = window.jQuery;
+    </script>
+
+    <!-- H5P Core JS - DEBE IR ANTES del Hub Client -->
+    <script src="/assets/js/h5p.js"></script>
+    <script src="/assets/js/h5p-event-dispatcher.js"></script>
+
+    <!-- H5P Hub Client JS - DEPENDE de H5P Core -->
     <script src="/assets/js/h5p-hub-client.js"></script>
 
     <script>
@@ -97,11 +107,16 @@
                         H5PIntegration.hub.contentTypes = response.contentTypes;
 
                         // Inicializar el Hub Client
-                        // Nota: La implementación exacta depende de la versión del hub-client
-                        if (window.H5P && window.H5P.Hub) {
+                        console.log('Objetos H5P disponibles:', window.H5P);
+
+                        debugger;
+
+                        if (window.H5P && window.H5P.HubClient) {
+                            new H5P.HubClient($('#h5p-hub'), H5PIntegration.hub);
+                        } else if (window.H5P && window.H5P.Hub) {
                             new H5P.Hub($('#h5p-hub'), H5PIntegration.hub);
                         } else {
-                            console.error('H5P Hub Client no está cargado correctamente');
+                            console.error('H5P Hub Client no encontrado en window.H5P', window.H5P);
                         }
                     }
                 },
