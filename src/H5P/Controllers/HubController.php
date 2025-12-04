@@ -1,10 +1,10 @@
 <?php
 
-namespace App\Controllers;
+namespace App\H5P\Controllers;
 
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
-use App\Framework\H5PFramework;
+use App\H5P\Framework\H5PFramework;
 use H5PCore;
 use H5peditor;
 
@@ -83,7 +83,7 @@ class HubController
      */
     public function showHub(Request $request, Response $response)
     {
-        $html = file_get_contents(__DIR__ . '/../../public/hub.html');
+        $html = file_get_contents(__DIR__ . '/../../../public/hub.html');
         $response->getBody()->write($html);
         return $response;
     }

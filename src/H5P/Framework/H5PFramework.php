@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Framework;
+namespace App\H5P\Framework;
 
 use PDO;
 use H5PFrameworkInterface;

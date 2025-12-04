@@ -8,6 +8,9 @@ $baseDir = dirname($vendorDir);
 return array(
     '253c157292f75eb38082b5acb06f3f01' => $vendorDir . '/nikic/fast-route/src/functions.php',
     '7b11c4dc42b3b3023073cb14e519683c' => $vendorDir . '/ralouphie/getallheaders/src/getallheaders.php',
+    '320cde22f66dd4f5d3fd621d3e88b98f' => $vendorDir . '/symfony/polyfill-ctype/bootstrap.php',
+    '0e6d7bf4a5811bfa5cf40c5ccd6fae6a' => $vendorDir . '/symfony/polyfill-mbstring/bootstrap.php',
+    'a4a119a56e50fbb293281d9a48007e0e' => $vendorDir . '/symfony/polyfill-php80/bootstrap.php',
     '0c6f877f03a67a7485a2a748706e2f2f' => $vendorDir . '/h5p/h5p-core/h5p.classes.php',
     'a63ae9f41847366feffbb295da33fc13' => $vendorDir . '/h5p/h5p-core/h5p-development.class.php',
     'b0f066922f2544ef1e43b5d30974b0f1' => $vendorDir . '/h5p/h5p-core/h5p-file-storage.interface.php',

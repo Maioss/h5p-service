@@ -7,8 +7,8 @@ use Slim\Factory\AppFactory;
 require __DIR__ . '/../vendor/autoload.php';
 
 // Cargar configuración
-// $dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
-// $dotenv->load();
+$dotenv = Dotenv\Dotenv::createImmutable(__DIR__ . '/..');
+$dotenv->load();
 
 // Conexión a BD
 $pdo = new PDO(
@@ -19,7 +19,7 @@ $pdo = new PDO(
 );
 
 // Inicializar Framework
-$framework = new \App\Framework\H5PFramework($pdo);
+$framework = new \App\H5P\Framework\H5PFramework($pdo);
 
 // Crear app Slim
 $app = AppFactory::create();
@@ -32,13 +32,13 @@ $app->get('/', function (Request $request, Response $response) {
 
 // Ruta para mostrar el Hub
 $app->get('/hub', function (Request $request, Response $response) use ($framework) {
-    $controller = new \App\Controllers\HubController($framework);
+    $controller = new \App\H5P\Controllers\HubController($framework);
     return $controller->showHub($request, $response);
 });
 
 // API para obtener content types
 $app->get('/api/content-types', function (Request $request, Response $response) use ($framework) {
-    $controller = new \App\Controllers\HubController($framework);
+    $controller = new \App\H5P\Controllers\HubController($framework);
     return $controller->getContentTypes($request, $response);
 });
 
