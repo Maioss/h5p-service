@@ -6,6 +6,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>H5P Content Type Hub</title>
 
+    <!-- H5P Core CSS -->
+    <link rel="stylesheet" href="/assets/css/h5p.css">
+
+    <!-- H5P Editor CSS -->
+    <link rel="stylesheet" href="/assets/css/h5peditor.css">
+
     <!-- H5P Hub CSS -->
     <link rel="stylesheet" href="/assets/css/h5p-hub-client.css">
 
@@ -30,102 +36,239 @@
             color: #1a73d9;
             margin-bottom: 20px;
         }
+
+        .loading-message {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
     </style>
 </head>
 
 <body>
     <div class="hub-container">
         <h1>H5P Content Type Hub</h1>
-
-        <!-- El Hub se renderizará aquí -->
-        <div id="h5p-hub"></div>
+        <div id="h5p-hub">
+            <div class="loading-message">Cargando Hub...</div>
+        </div>
     </div>
 
     <!-- jQuery (requerido por H5P) -->
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 
     <script>
-        // Puente necesario: H5P espera encontrar jQuery en H5P.jQuery
+        // ===================================================
+        // INICIALIZACIÓN DE NAMESPACES H5P
+        // Según especificación oficial de H5P
+        // ===================================================
         window.H5P = window.H5P || {};
+        window.H5PEditor = window.H5PEditor || {};
+
+        // Puente jQuery
         H5P.jQuery = window.jQuery;
+        H5PEditor.$ = window.jQuery;
+
+        // Traducciones del Editor (CRÍTICO para el Hub Client)
+        H5PEditor.language = H5PEditor.language || {};
+        H5PEditor.language.core = {
+            loading: 'Cargando...',
+            selectLibrary: 'Selecciona el tipo de contenido que deseas usar',
+            noLibrariesInstalled: 'No hay tipos de contenido instalados',
+            search: 'Buscar',
+            install: 'Instalar',
+            update: 'Actualizar',
+            use: 'Usar',
+            close: 'Cerrar',
+            title: 'Título',
+            author: 'Autor',
+            year: 'Año',
+            source: 'Fuente',
+            license: 'Licencia',
+            thumbnail: 'Miniatura',
+            size: 'Tamaño',
+            lastUpdate: 'Última actualización',
+            installed: 'Instalado',
+            uninstalled: 'Sin instalar',
+            updating: 'Actualizando',
+            installing: 'Instalando',
+            cancel: 'Cancelar',
+            by: 'por'
+        };
     </script>
 
-    <!-- H5P Core JS - DEBE IR ANTES del Hub Client -->
+    <!-- ============================================ -->
+    <!-- ARCHIVOS H5P CORE -->
+    <!-- ============================================ -->
     <script src="/assets/js/h5p.js"></script>
     <script src="/assets/js/h5p-event-dispatcher.js"></script>
+    <script src="/assets/js/h5p-x-api-event.js"></script>
+    <script src="/assets/js/h5p-x-api.js"></script>
+    <script src="/assets/js/h5p-content-type.js"></script>
+    <script src="/assets/js/h5p-confirmation-dialog.js"></script>
+    <script src="/assets/js/h5p-action-bar.js"></script>
 
-    <!-- H5P Hub Client JS - DEPENDE de H5P Core -->
+    <!-- ============================================ -->
+    <!-- ARCHIVOS H5P EDITOR -->
+    <!-- ============================================ -->
+    <script src="/assets/js/h5peditor.js"></script>
+    <script src="/assets/js/h5peditor-semantic-structure.js"></script>
+    <script src="/assets/js/h5peditor-library-selector.js"></script>
+
+    <!-- ============================================ -->
+    <!-- H5P HUB CLIENT (COMPILADO) -->
+    <!-- ============================================ -->
     <script src="/assets/js/h5p-hub-client.js"></script>
 
     <script>
-        // Configuración del Hub
-        var H5PIntegration = {
-            baseUrl: window.location.origin,
-            url: '/h5p',
-            postUserStatistics: false,
-            ajax: {
-                setFinished: '/api/h5p/set-finished',
-                contentUserData: '/api/h5p/content-user-data'
-            },
-            saveFreq: false,
-            siteUrl: window.location.origin,
-            l10n: {
-                H5P: {
-                    // Traducciones básicas
-                    fullscreen: 'Fullscreen',
-                    disableFullscreen: 'Disable fullscreen',
-                    download: 'Download',
-                    copyrights: 'Rights of use',
-                    embed: 'Embed',
-                    size: 'Size',
-                    showAdvanced: 'Show advanced',
-                    hideAdvanced: 'Hide advanced'
-                }
-            },
-            hubIsEnabled: true,
-            // Configuración del Hub
-            hub: {
-                apiVersion: { major: 1, minor: 1 },
-                contentTypes: [],
-                contentTypeCache: '/api/content-types',
-                contentSearchUrl: 'https://api.h5p.org/v1/content-types/'
-            }
-        };
-
-        // Inicializar el Hub cuando el DOM esté listo
+        // ===================================================
+        // INICIALIZACIÓN DEL HUB CLIENT
+        // Según especificación oficial de H5P Hub
+        // ===================================================
         $(document).ready(function () {
-            // Cargar content types
+            console.log('=== Inicializando H5P Hub (Implementación Oficial) ===');
+
+            // Verificar dependencias
+            if (typeof H5P === 'undefined') {
+                showError('H5P Core no está cargado');
+                return;
+            }
+
+            if (typeof H5PEditor === 'undefined') {
+                showError('H5P Editor no está cargado');
+                return;
+            }
+
+            if (typeof H5P.HubClient === 'undefined') {
+                showError('H5P Hub Client no está compilado o no se cargó correctamente');
+                return;
+            }
+
+            // Cargar content types desde el servidor
+            // El servidor ya devuelve los datos normalizados según especificación oficial
             $.ajax({
                 url: '/api/content-types',
                 method: 'GET',
                 dataType: 'json',
                 success: function (response) {
+                    console.log('Content types recibidos:', response);
 
-                    debugger;
+                    if (!response.success) {
+                        showError('Error: ' + (response.error || 'Respuesta inválida del servidor'));
+                        return;
+                    }
 
-                    if (response.success) {
-                        H5PIntegration.hub.contentTypes = response.contentTypes;
+                    if (!Array.isArray(response.contentTypes)) {
+                        showError('Los content types no tienen el formato correcto');
+                        return;
+                    }
 
-                        // Inicializar el Hub Client
-                        console.log('Objetos H5P disponibles:', window.H5P);
+                    // ===================================================
+                    // CREAR ESTADO DEL HUB
+                    // Según especificación oficial, el Hub Client espera:
+                    // - contentTypes: array de content types normalizados
+                    // - getAjaxUrl: función para obtener URLs de endpoints
+                    // - Otros flags opcionales
+                    // ===================================================
+                    var hubState = {
+                        // Content types normalizados (ya viene del servidor)
+                        contentTypes: response.contentTypes,
 
-                        debugger;
+                        // ID del contenido (0 para nuevo contenido)
+                        contentId: 0,
 
-                        if (window.H5P && window.H5P.HubClient) {
-                            new H5P.HubClient($('#h5p-hub'), H5PIntegration.hub);
-                        } else if (window.H5P && window.H5P.Hub) {
-                            new H5P.Hub($('#h5p-hub'), H5PIntegration.hub);
-                        } else {
-                            console.error('H5P Hub Client no encontrado en window.H5P', window.H5P);
-                        }
+                        // Función CRÍTICA: mapeo de acciones a URLs
+                        getAjaxUrl: function (action, parameters) {
+                            console.log('getAjaxUrl:', action, parameters);
+
+                            var urls = {
+                                'content-hub-metadata-cache': '/api/content-types',
+                                'content-types': '/api/content-types',
+                                'libraries': '/api/libraries',
+                                'library-install': '/api/library-install',
+                                'library-upload': '/api/library-upload'
+                            };
+
+                            var url = urls[action] || ('/api/' + action);
+
+                            // Agregar parámetros si existen
+                            if (parameters) {
+                                var params = [];
+                                for (var key in parameters) {
+                                    if (parameters.hasOwnProperty(key)) {
+                                        params.push(key + '=' + encodeURIComponent(parameters[key]));
+                                    }
+                                }
+                                if (params.length > 0) {
+                                    url += '?' + params.join('&');
+                                }
+                            }
+
+                            console.log('URL generada:', url);
+                            return url;
+                        },
+
+                        // Configuración del Hub
+                        descriptionExpanded: true,
+                        expanded: true,
+                        canPaste: false,
+                        enableContentHub: true
+                    };
+
+                    try {
+                        // ===================================================
+                        // INICIALIZAR HUB CLIENT
+                        // Firma oficial: new H5P.HubClient(state, translations)
+                        // ===================================================
+                        console.log('Inicializando H5P.HubClient...');
+
+                        var hubClient = new H5P.HubClient(hubState, H5PEditor.language.core);
+
+                        // Obtener elemento DOM del Hub
+                        var hubElement = hubClient.getElement();
+
+                        // Insertar en el contenedor
+                        var container = document.getElementById('h5p-hub');
+                        container.innerHTML = '';
+                        container.appendChild(hubElement);
+
+                        console.log('✅ Hub inicializado correctamente');
+                        console.log('Content types disponibles:', response.contentTypes.length);
+
+                    } catch (error) {
+                        console.error('❌ Error al inicializar Hub:', error);
+                        showError('Error al inicializar Hub Client: ' + error.message + '\nRevisa la consola para más detalles.');
                     }
                 },
                 error: function (xhr, status, error) {
-                    console.error('Error al cargar content types:', error);
-                    $('#h5p-hub').html('<p>Error al cargar el Hub. Ver consola para detalles.</p>');
+                    console.error('❌ Error al cargar content types');
+                    console.error('Status:', status);
+                    console.error('Error:', error);
+                    console.error('Response:', xhr.responseText);
+                    showError('Error al cargar content types del servidor. Verifica que el endpoint /api/content-types funcione correctamente.');
                 }
             });
         });
+
+        // ===================================================
+        // FUNCIÓN DE UTILIDAD: Mostrar errores
+        // ===================================================
+        function showError(message) {
+            $('#h5p-hub').html(
+                '<div style="background: #fee; border: 2px solid #c00; border-radius: 8px; padding: 20px; margin: 20px 0;">' +
+                '<h3 style="color: #c00; margin-top: 0;">❌ Error</h3>' +
+                '<p>' + message + '</p>' +
+                '<h4>Diagnóstico:</h4>' +
+                '<ul>' +
+                '<li>H5P disponible: ' + (typeof H5P !== 'undefined' ? '✅' : '❌') + '</li>' +
+                '<li>H5PEditor disponible: ' + (typeof H5PEditor !== 'undefined' ? '✅' : '❌') + '</li>' +
+                '<li>H5P.HubClient disponible: ' + (typeof H5P !== 'undefined' && typeof H5P.HubClient !== 'undefined' ? '✅' : '❌') + '</li>' +
+                '<li>jQuery disponible: ' + (typeof jQuery !== 'undefined' ? '✅' : '❌') + '</li>' +
+                '<li>Traducciones disponibles: ' + (typeof H5PEditor !== 'undefined' && typeof H5PEditor.language !== 'undefined' && typeof H5PEditor.language.core !== 'undefined' ? '✅' : '❌') + '</li>' +
+                '</ul>' +
+                '<p><strong>Abre la consola del navegador (F12) para más detalles.</strong></p>' +
+                '</div>'
+            );
+        }
     </script>
 </body>
 

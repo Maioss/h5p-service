@@ -84,17 +84,33 @@ class H5PFramework implements \H5PFrameworkInterface
      */
     public function getOption($name, $default = null)
     {
-        $options = [
+        // Valores por defecto hardcodeados
+        $defaults = [
             'h5p_hub_is_enabled' => true,
             'h5p_send_usage_statistics' => false,
             'h5p_export' => true,
             'h5p_embed' => true,
             'h5p_copyright' => true,
-            'h5p_icon' => true,
-            'h5p_content_type_cache_updated_at' => time()
+            'h5p_icon' => true
         ];
 
-        return $options[$name] ?? $default;
+        try {
+            // Intentar obtener de la base de datos
+            $stmt = $this->db->prepare("SELECT option_value FROM h5p_options WHERE option_name = :name");
+            $stmt->execute(['name' => $name]);
+            $result = $stmt->fetch(PDO::FETCH_ASSOC);
+
+            if ($result) {
+                // Deserializar el valor
+                return unserialize($result['option_value']);
+            }
+        } catch (\Exception $e) {
+            // Si la tabla no existe o hay error, continuar con defaults
+            error_log("H5P getOption error: " . $e->getMessage());
+        }
+
+        // Retornar default hardcodeado o el provisto
+        return $defaults[$name] ?? $default;
     }
 
     /**
@@ -102,8 +118,29 @@ class H5PFramework implements \H5PFrameworkInterface
      */
     public function setOption($name, $value)
     {
-        // Implementar si necesitas persistencia
-        return true;
+        try {
+            // Serializar el valor para almacenar cualquier tipo de dato
+            $serializedValue = serialize($value);
+
+            // Usar INSERT ... ON DUPLICATE KEY UPDATE para MySQL
+            $stmt = $this->db->prepare("
+                INSERT INTO h5p_options (option_name, option_value, updated_at)
+                VALUES (:name, :value, NOW())
+                ON DUPLICATE KEY UPDATE 
+                    option_value = :value,
+                    updated_at = NOW()
+            ");
+
+            $stmt->execute([
+                'name' => $name,
+                'value' => $serializedValue
+            ]);
+
+            return true;
+        } catch (\Exception $e) {
+            error_log("H5P setOption error: " . $e->getMessage());
+            return false;
+        }
     }
 
     /**
@@ -148,10 +185,6 @@ class H5PFramework implements \H5PFrameworkInterface
 
         return $stmt->fetch(PDO::FETCH_ASSOC);
     }
-    
-    // ============================================
-    // MÉTODOS DEL HUB CACHE
-    // ============================================
 
     /**
      * Obtener caché del Hub
@@ -188,13 +221,14 @@ class H5PFramework implements \H5PFrameworkInterface
             INSERT INTO h5p_libraries_hub_cache 
             (machine_name, major_version, minor_version, patch_version,
              title, summary, description, icon, is_recommended, 
-             popularity, example, tutorial, keywords, categories, owner)
+             popularity, example, tutorial, keywords, categories, owner, created_at, updated_at)
             VALUES 
             (:machine_name, :major_version, :minor_version, :patch_version,
              :title, :summary, :description, :icon, :is_recommended,
-             :popularity, :example, :tutorial, :keywords, :categories, :owner)
+             :popularity, :example, :tutorial, :keywords, :categories, :owner, :created_at, :updated_at)
         ");
 
+        $currentTime = time();
         foreach ($contentTypeCache as $ct) {
             $stmt->execute([
                 'machine_name' => $ct->id,
@@ -211,7 +245,9 @@ class H5PFramework implements \H5PFrameworkInterface
                 'tutorial' => $ct->tutorial ?? '',
                 'keywords' => isset($ct->keywords) ? json_encode($ct->keywords) : null,
                 'categories' => isset($ct->categories) ? json_encode($ct->categories) : null,
-                'owner' => $ct->owner ?? ''
+                'owner' => $ct->owner ?? '',
+                'created_at' => $currentTime,
+                'updated_at' => $currentTime
             ]);
         }
     }
@@ -232,10 +268,6 @@ class H5PFramework implements \H5PFrameworkInterface
         $this->setOption('h5p_content_type_cache_updated_at', $time);
     }
 
-    // ============================================
-    // MÉTODOS DE TRADUCCIÓN Y MENSAJES
-    // ============================================
-
     public function t($message, $replacements = [])
     {
         // Sistema simple de traducción
@@ -255,10 +287,6 @@ class H5PFramework implements \H5PFrameworkInterface
         error_log("H5P Info: $message");
     }
 
-    // ============================================
-    // MÉTODOS DE FILESYSTEM (Simplificados)
-    // ============================================
-
     public function getH5pPath()
     {
         return __DIR__ . '/../../h5p';
@@ -274,9 +302,7 @@ class H5PFramework implements \H5PFrameworkInterface
         return $this->getUploadedH5pFolderPath() . '/uploaded.h5p';
     }
 
-    // ============================================
-    // MÉTODOS NO IMPLEMENTADOS (Para POC)
-    // ============================================
+    // MÉTODOS NO IMPLEMENTADOS
 
     public function mayUpdateLibraries()
     {
