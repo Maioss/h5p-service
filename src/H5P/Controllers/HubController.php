@@ -8,13 +8,8 @@ use App\H5P\Framework\H5PFramework;
 use H5PCore;
 
 /**
- * Hub Controller - Implementación según especificación oficial H5P
- * 
- * Basado en:
- * - https://github.com/Lumieducation/H5P-Nodejs-library/wiki/Communication-with-the-H5P-Hub
- * - https://github.com/h5p/h5p-wordpress-plugin
- * - https://github.com/h5p/h5p-editor-php-library
- */
+ * https://github.com/h5p/h5p-editor-php-library
+ **/
 class HubController
 {
     private $framework;
@@ -46,30 +41,30 @@ class HubController
     public function getContentTypes(Request $request, Response $response)
     {
         try {
-            // PASO 1: Obtener content types del Hub (con caché)
+            // Obtener content types del Hub (con caché)
             $hubContentTypes = $this->getHubContentTypes();
 
-            // PASO 2: Obtener librerías instaladas localmente
+            // Obtener librerías instaladas localmente
             $localLibraries = $this->getLocalLibraries();
 
-            // PASO 3: Combinar y normalizar (según especificación oficial)
+            // Combinar y normalizar 
             $mergedContentTypes = $this->mergeLocalLibsIntoCachedLibs(
                 $hubContentTypes,
                 $localLibraries
             );
 
-            // PASO 4: Crear respuesta según formato oficial
+            // Crear respuesta 
             $result = [
                 'success' => true,
                 'contentTypes' => $mergedContentTypes,
                 'outdated' => $this->isCacheOutdated(),
-                'user' => 'local',  // o 'external' según tu configuración
-                'recentlyUsed' => [],  // TODO: implementar según usuario
+                'user' => 'local',
+                'recentlyUsed' => [],
                 'apiVersion' => [
                     'major' => 1,
                     'minor' => 24
                 ],
-                'details' => null  // mensajes informativos si es necesario
+                'details' => null
             ];
 
             $response->getBody()->write(json_encode($result));
@@ -139,7 +134,7 @@ class HubController
                             ($lib['machineName'] ?? $lib['name']) . '-' .
                             ($lib['majorVersion'] ?? $lib['major_version']) . '.' .
                             ($lib['minorVersion'] ?? $lib['minor_version']) . '/icon.svg'),
-                        'restricted' => false  // TODO: implementar lógica de restricción
+                        'restricted' => false
                     ];
                 }
             }
@@ -218,7 +213,7 @@ class HubController
             $merged[$hubLib['machineName'] ?? $hubLib['id']] = $normalized;
         }
 
-        // PASO 2: Actualizar con información de librerías locales
+        // Actualizar con información de librerías locales
         foreach ($localLibs as $localLib) {
             $machineName = $localLib['machineName'];
 
@@ -273,7 +268,7 @@ class HubController
             }
         }
 
-        // PASO 3: Convertir de array asociativo a array indexado
+        //Convertir de array asociativo a array indexado
         return array_values($merged);
     }
 
@@ -392,7 +387,7 @@ class HubController
     }
 
     /**
-     * PASO 1: Obtener UUID (registrar solo si no existe)
+     *Obtener UUID (registrar solo si no existe)
      */
     private function getOrCreateUUID()
     {
@@ -409,7 +404,7 @@ class HubController
     }
 
     /**
-     * PASO 2: Registrar sitio en H5P.org
+     * Registrar sitio en H5P.org
      */
     private function registerSite()
     {
@@ -452,7 +447,7 @@ class HubController
     }
 
     /**
-     * PASO 3: Actualizar caché de content types desde H5P.org
+     * Actualizar caché de content types desde H5P.org
      */
     private function updateHubCache()
     {

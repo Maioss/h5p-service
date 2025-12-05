@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: h5p-service-web
+    ports:
+      - "8080:80"
+    volumes:
+      # Mount source code for development
+      - ./src:/var/www/html/src
+      - ./public:/var/www/html/public
+      - ./config:/var/www/html/config
+      # Mount storage for persistent H5P data
+      - ./storage:/var/www/html/storage
+      # Mount vendor separately to avoid conflicts
+      - vendor_data:/var/www/html/vendor
+    environment:
+      - DB_HOST=db
+      - DB_NAME=h5p_service
+      - DB_USER=h5p_user
+      - DB_PASS=h5p_password
+      - DB_CHARSET=utf8mb4
+      - H5P_PATH=/h5p
+      - H5P_DEVELOPMENT_MODE=true
+      - H5P_DISABLE_AGGREGATION=true
+      - H5P_HUB_ENABLED=true
+    depends_on:
+      - db
+    networks:
+      - h5p-network
+
+  db:
+    image: mysql:8.0
+    container_name: h5p-service-db
+    ports:
+      - "3307:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=h5p_service
+      - MYSQL_USER=h5p_user
+      - MYSQL_PASSWORD=h5p_password
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - h5p-network
+    command: --default-authentication-plugin=mysql_native_password
+
+volumes:
+  db_data:
+    driver: local
+  vendor_data:
+    driver: local
+
+networks:
+  h5p-network:
+    driver: bridge
